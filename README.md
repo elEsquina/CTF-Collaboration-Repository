@@ -2,6 +2,46 @@
 
 A private, lightweight challenge library for a team. Upload, browse, search, edit, and download CTF challenges. React/Vite/Tailwind frontend, FastAPI/SQLAlchemy backend, SQLite metadata, and local ZIP storage. There are no accounts, scores, challenge execution, or automatic Docker deployments.
 
+## Docker Compose
+
+Prerequisite: Docker Engine/Desktop with Docker Compose **2.24+**. From the repository root:
+
+```bash
+docker compose up
+```
+
+The first run builds both images. Open **http://localhost:8080**. On first startup, the backend prints `First-start shared password: ...` in the terminal. The generated password and session secret are saved in the Docker volume and reused on subsequent starts. To see the first-start message again: `docker compose logs backend`.
+
+If `server/.env` already exists, Compose loads your configured password, session secret, and upload limits instead. No password or other secret is built into either image. Missing credentials are generated automatically. For a colleague accessing a different hostname, set `ALLOWED_ORIGINS` to the browser's exact origin before starting, for example:
+
+```bash
+ALLOWED_ORIGINS=http://ctf.internal:8080 docker compose up
+```
+
+Nginx serves the built React application and proxies `/api` to FastAPI under the same origin. Only port 8080 is exposed; the backend is internal. Both containers run as non-root users. Compose waits for the database-backed backend health check before starting the frontend.
+
+```bash
+docker compose up -d          # run in the background
+docker compose logs -f       # follow logs
+docker compose down          # stop; retain uploaded challenges and credentials
+docker compose up --build    # rebuild after source/dependency changes
+```
+
+The named `repository-data` volume holds `/data/ctf.db`, `/data/challenges/`, and `/data/.env` inside the backend container. Container recreation and `docker compose down` preserve it. **`docker compose down -v` deletes the repository and its credentials.** Local development data in `server/ctf.db` and `server/challenges/` is separate and is not imported automatically. Keep one backend container/worker.
+
+To locate storage or back up a stopped repository:
+
+```bash
+docker compose exec backend ls -la /data
+docker compose stop backend
+docker compose cp backend:/data ./repository-backup
+docker compose start backend
+```
+
+The backup includes private flags and credentials. Restore by copying the backup's contents into `/data` with the backend stopped, preserving ownership for UID/GID 10001. For HTTPS behind another proxy, enable `COOKIE_SECURE=true` in `server/.env` and include the external HTTPS origin in `ALLOWED_ORIGINS`.
+
+Compose verification passed: both images built, both health checks passed, and login, Docker/static uploads, edits, rejected replacements, downloads, logout, and persistence across backend container recreation worked through Nginx.
+
 ## Local setup
 
 Prerequisites: Python 3.11+ with `venv`, Node.js 20.19+ (or 22.12+), and npm. Run commands from this repository's root.
@@ -113,6 +153,7 @@ CTF_Challs/
 │   ├── config.py / auth.py
 │   ├── database.py / models.py / schemas.py / crud.py
 │   ├── archive.py             # ZIP inspection and extraction
+│   ├── Dockerfile / container.py # container build and first-start configuration
 │   ├── requirements.txt / requirements.lock.txt
 │   ├── .env.example
 │   ├── tests/test_api.py
@@ -121,6 +162,8 @@ CTF_Challs/
 │       └── 001_challenge-name/
 │           ├── original.zip
 │           └── extracted/
+├── compose.yaml               # frontend, backend, persistent volume
+├── .dockerignore
 ├── .gitignore
 └── README.md
 ```
@@ -156,7 +199,7 @@ npm test --prefix frontend
 npm run build --prefix frontend
 ```
 
-Verification result: **64 backend tests and 7 frontend API tests passed**, and the Vite production build succeeded. The installed Starlette version emits one test-client HTTPX deprecation warning; it does not affect the application.
+Verification result: **69 backend tests and 7 frontend API tests passed**, and the Vite production build succeeded. The installed Starlette version emits one test-client HTTPX deprecation warning; it does not affect the application.
 
 Tests use temporary storage and an isolated SQLite database, without real `.env` credentials. They cover login/logout, private endpoints, CSRF/origin checks, Docker/static layouts, enclosing folders, unsafe/corrupt/encrypted ZIPs, size limits, filtering/search, metadata edits, archive replacement, rollback cleanup, downloads, and persistence after reconnecting.
 
